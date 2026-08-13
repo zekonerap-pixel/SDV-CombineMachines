@@ -96,7 +96,9 @@ namespace CombineMachines.Helpers
                         Vector2 Location = KVP.Key;
                         SObject Item = KVP.Value;
 
-                        if (Item.bigCraftable.Value == PreviousHeldObject.bigCraftable.Value && Item.ParentSheetIndex == PreviousHeldObject.ParentSheetIndex)
+                        // Match the placed object by its globally unique qualified item ID instead of its
+                        // sprite index. This also works for machines added by Content Patcher and other mods.
+                        if (Item.IsSameMachineType(PreviousHeldObject))
                         {
                             CopyTrackedModData(PreviousHeldObject, Item);
                         }
