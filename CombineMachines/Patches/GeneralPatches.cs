@@ -74,7 +74,8 @@ namespace CombineMachines.Patches
                 {
                     // Recreate the exact registered item type. This is important for modded machines whose
                     // item IDs are strings and whose object data isn't represented by a vanilla sprite index.
-                    Item CombinedRefund = ItemRegistry.Create(__instance.QualifiedItemId, CombinedQuantity - 1);
+                    SObject CombinedRefund = ItemRegistry.Create<SObject>(__instance.QualifiedItemId);
+                    CombinedRefund.Stack = CombinedQuantity - 1;
                     Game1.createItemDebris(CombinedRefund, __instance.TileLocation * 64f, (Game1.player.FacingDirection + 2) % 4, null, -1);
                 }
                 return true;
