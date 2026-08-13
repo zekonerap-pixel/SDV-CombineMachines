@@ -72,7 +72,9 @@ namespace CombineMachines.Patches
                 //  refund the other 2 combined quantity
                 if (__instance.IsCombinableObject() && __instance.TryGetCombinedQuantity(out int CombinedQuantity) && CombinedQuantity > 1)
                 {
-                    SObject CombinedRefund = new SObject(Vector2.Zero, __instance.ItemId, false) { Stack = CombinedQuantity - 1 };
+                    // Recreate the exact registered item type. This is important for modded machines whose
+                    // item IDs are strings and whose object data isn't represented by a vanilla sprite index.
+                    Item CombinedRefund = ItemRegistry.Create(__instance.QualifiedItemId, CombinedQuantity - 1);
                     Game1.createItemDebris(CombinedRefund, __instance.TileLocation * 64f, (Game1.player.FacingDirection + 2) % 4, null, -1);
                 }
                 return true;
