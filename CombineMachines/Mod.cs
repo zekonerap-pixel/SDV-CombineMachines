@@ -445,7 +445,7 @@ namespace CombineMachines
             return Machine1 != null && Machine2 != null &&
                 Machine1.IsCombinableObject() && Machine2.IsCombinableObject() &&
                 Machine1.Stack >= 1 && Machine2.Stack >= 1 &&
-                Machine1.ParentSheetIndex == Machine2.ParentSheetIndex &&
+                Machine1.IsSameMachineType(Machine2) &&
                 (Machine1.IsCombinedMachine() || Machine2.IsCombinedMachine() || Machine1.canStackWith(Machine2));
         }
     }
