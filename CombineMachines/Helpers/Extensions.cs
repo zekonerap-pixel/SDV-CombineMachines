@@ -85,10 +85,20 @@ namespace CombineMachines.Helpers
                 return 1.0;
         }
 
+        /// <summary>Returns whether two object instances represent the exact same registered item type.</summary>
+        public static bool IsSameMachineType(this SObject Item, SObject Other)
+        {
+            return Item != null && Other != null &&
+                !string.IsNullOrEmpty(Item.QualifiedItemId) &&
+                string.Equals(Item.QualifiedItemId, Other.QualifiedItemId, StringComparison.Ordinal);
+        }
+
         /// <summary>The item Ids of machines that are just regular objects, rather than BigCraftable item types.</summary>
         public static readonly ReadOnlyCollection<int> NonBigCraftableMachineIds = new List<int>() {
             710 // Crab Pot
         }.AsReadOnly();
+
+        private const string CrabPotQualifiedItemId = "(O)710";
 
 #if LEGACY_CODE
         /// <summary>The item Ids of BigCraftables objects that are not machines.</summary>
@@ -207,8 +217,14 @@ namespace CombineMachines.Helpers
 
         public static bool IsCombinableObject(this SObject Item)
         {
-            return Item.IsScarecrow() || Item.GetMachineData() != null ||
-                (!Item.bigCraftable.Value && NonBigCraftableMachineIds.Contains(Item.ParentSheetIndex)); // All non-BigCraftable Machines, such as Crab Pots
+            if (Item == null)
+                return false;
+
+            // Stardew Valley 1.6 machine definitions are data-driven. GetMachineData() therefore
+            // automatically recognizes vanilla machines and compatible machines registered by other mods.
+            return Item.IsScarecrow() ||
+                Item.GetMachineData() != null ||
+                string.Equals(Item.QualifiedItemId, CrabPotQualifiedItemId, StringComparison.Ordinal);
         }
 
         //Taken from: https://stackoverflow.com/questions/521146/c-sharp-split-string-but-keep-split-chars-separators
