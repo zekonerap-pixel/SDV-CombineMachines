@@ -4,7 +4,6 @@ using StardewModdingAPI;
 using StardewValley;
 using StardewValley.GameData.Machines;
 using System;
-using System.Runtime.CompilerServices;
 using SObject = StardewValley.Object;
 
 namespace CombineMachines.Patches
@@ -15,21 +14,15 @@ namespace CombineMachines.Patches
     /// </summary>
     internal static class CrystalariumRepeatCyclePatch
     {
-        private const string HarmonyId = "SlayerDharok.CombineMachines.CrystalariumRepeatCycleFix";
         private const string ModDataExecutingFunctionKey = "CombineMachines_ExecutingFunction";
         private const string CrystalariumQualifiedItemId = "(BC)21";
 
-        /// <summary>
-        /// Register the fallback patch as soon as the assembly is loaded.
-        /// Also keep routine diagnostic messages at Trace level even in Debug builds, so normal
-        /// <c>dotnet build</c> test builds don't flood the SMAPI console.
-        /// </summary>
-        [ModuleInitializer]
-        internal static void Initialize()
+        /// <summary>Register the Crystalarium fallback using the mod's existing Harmony instance.</summary>
+        internal static void Entry(Harmony harmony)
         {
+            // Routine processing diagnostics shouldn't flood the normal SMAPI console in Debug builds.
             ModEntry.InfoLogLevel = LogLevel.Trace;
 
-            Harmony harmony = new Harmony(HarmonyId);
             harmony.Patch(
                 original: AccessTools.Method(typeof(SObject), nameof(SObject.OutputMachine)),
                 postfix: new HarmonyMethod(typeof(CrystalariumRepeatCyclePatch), nameof(OutputMachinePostfix))
