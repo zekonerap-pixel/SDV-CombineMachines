@@ -1,4 +1,5 @@
-﻿using HarmonyLib;
+using CombineMachines.Patches;
+using HarmonyLib;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
@@ -100,7 +101,36 @@ namespace CombineMachines.Helpers
                         // sprite index. This also works for machines added by Content Patcher and other mods.
                         if (Item.IsSameMachineType(PreviousHeldObject))
                         {
+                            // Some machines (notably Bee Houses) start their MachinePutDown output cycle
+                            // during placementAction, before ObjectListChanged fires. If placement created a
+                            // fresh object without our combined-quantity modData, the processing patch sees
+                            // quantity=1 and can't apply IncreaseSpeed. Detect that exact late-restore case so
+                            // the timer can be repaired once after the quantity metadata has been copied.
+                            bool HadCombinedQuantityBeforeCopy =
+                                Item.TryGetCombinedQuantity(out int ExistingCombinedQuantity) && ExistingCombinedQuantity > 1;
+
                             CopyTrackedModData(PreviousHeldObject, Item);
+
+                            if (!HadCombinedQuantityBeforeCopy &&
+                                Item.TryGetCombinedQuantity(out int RestoredCombinedQuantity) &&
+                                RestoredCombinedQuantity > 1)
+                            {
+                                if (ProcessingPatches.OutputMachinePatch.TryUpdateMinutesUntilReady(
+                                    Item,
+                                    RestoredCombinedQuantity,
+                                    out int PreviousMinutes,
+                                    out int NewMinutes,
+                                    out double DurationMultiplier))
+                                {
+                                    ModEntry.Logger.Log(
+                                        $"{nameof(ModDataPersistenceHelper)}: Repaired placement-started timer for " +
+                                        $"{Item.DisplayName} ({Item.QualifiedItemId}) from {PreviousMinutes} to {NewMinutes} minutes " +
+                                        $"after restoring combined quantity {RestoredCombinedQuantity} " +
+                                        $"({(DurationMultiplier * 100.0).ToString("0.##")}% duration).",
+                                        ModEntry.InfoLogLevel
+                                    );
+                                }
+                            }
                         }
                     }
                 }
