@@ -14,9 +14,10 @@ namespace CombineMachines.Patches
     /// Compatibility fallback for data-driven machines whose OutputMachine calls happen outside
     /// the vanilla caller paths tracked by <see cref="ProcessingPatches.OutputMachinePatch"/>.
     ///
-    /// Unknown callers are handled conservatively: outputs which Stardew recalculates on collection
-    /// keep their combined output multiplier, while other unknown processing paths are accelerated
-    /// instead of multiplying inputs/outputs that may be consumed by custom mod code.
+    /// Unknown callers are handled conservatively: RecalculateOnCollect rules preserve the configured
+    /// MultiplyItems behavior when appropriate, while IncreaseSpeed can still accelerate their cycle.
+    /// Other unknown processing paths are accelerated instead of multiplying inputs/outputs that may
+    /// be consumed by custom mod code.
     /// </summary>
     internal static class GenericMachineFallbackPatch
     {
@@ -89,10 +90,11 @@ namespace CombineMachines.Patches
 
                 // Some machines (notably Bee Houses) regenerate their output immediately before the
                 // player collects it. That replacement can discard a multiplier previously applied
-                // when the output first became ready, so apply it to the freshly recalculated item.
+                // when the output first became ready, so preserve MultiplyItems on the fresh output.
                 //
-                // If this has a tracked caller, we only reach this point when the main patch rejected
-                // the call because inputItem was non-null, so there is no double multiplication.
+                // IMPORTANT: don't return here merely because the rule is RecalculateOnCollect.
+                // In IncreaseSpeed mode these machines still need the generic timer fallback when
+                // OutputMachine was reached through an untracked caller such as MachinePutDown.
                 if (isRecalculatedOutput)
                 {
                     if (mainPatchRejectsRecalculatedOutput)
@@ -105,8 +107,19 @@ namespace CombineMachines.Patches
                         );
                     }
 
-                    TryApplyRecalculatedOutputMultiplier(__instance, combinedQuantity);
-                    return;
+                    if (ModEntry.UserConfig.ShouldModifyInputsAndOutputs(__instance))
+                    {
+                        TryApplyRecalculatedOutputMultiplier(__instance, combinedQuantity);
+                        return;
+                    }
+
+                    // For a tracked caller, the main patch applies IncreaseSpeed before reaching the
+                    // legacy inputItem validation which may reject this call. Avoid accelerating twice.
+                    if (hasTrackedCaller)
+                        return;
+
+                    // Untracked RecalculateOnCollect caller + IncreaseSpeed: fall through to the
+                    // compatibility speed path below. Bee Houses can start/restart through this route.
                 }
 
                 if (TryApplyCompatibilitySpeed(__instance, combinedQuantity, out int previousMinutes, out int newMinutes, out double durationMultiplier))
