@@ -11,11 +11,11 @@ namespace CombineMachines.Patches
     /// <summary>
     /// Optional compatibility for Producer Framework Mod (PFM).
     ///
-    /// PFM can calculate a machine timer in multiple assignments (for example, applying
-    /// SubtractTimeOfDay after setting the base duration). If Combine Machines accelerates an
-    /// intermediate assignment, PFM can subsequently clamp the timer to one minute. This patch
-    /// lets PFM finish its calculation first and then applies the combined processing speed once
-    /// to the final timer.
+    /// PFM can calculate a machine timer in multiple assignments and can optionally subtract the
+    /// current time of day from long-running producer rules. Combine Machines must wait until PFM
+    /// finishes those assignments, then apply processing power once. For SubtractTimeOfDay rules,
+    /// the declared base duration is used so repeated accelerated cycles don't get progressively
+    /// shorter as the in-game clock advances.
     /// </summary>
     internal static class ProducerFrameworkCompatibilityPatch
     {
@@ -43,6 +43,7 @@ namespace CombineMachines.Patches
                     .FirstOrDefault(method =>
                         method.Name == "ProduceOutput" &&
                         method.GetParameters().Any(parameter => parameter.Name == "producer") &&
+                        method.GetParameters().Any(parameter => parameter.Name == "producerRule") &&
                         method.GetParameters().Any(parameter => parameter.Name == "probe"));
 
                 if (produceOutput == null)
@@ -88,18 +89,36 @@ namespace CombineMachines.Patches
                 ExternalTimerFallbackPatch.BeginExternalFrameworkTimerCalculation(producer);
         }
 
-        private static Exception ProduceOutputFinalizer(SObject producer, bool probe, Exception __exception)
+        private static Exception ProduceOutputFinalizer(
+            SObject producer,
+            object producerRule,
+            bool probe,
+            object __result,
+            Exception __exception)
         {
             try
             {
-                // PFM has now completed all of its own duration calculations, including
-                // SubtractTimeOfDay. Only the final timer should be accelerated.
-                if (!probe && producer != null && __exception == null)
+                if (!probe && producer != null && __exception == null && __result != null)
                 {
-                    ExternalTimerFallbackPatch.TryApplySpeedToCurrentTimer(
-                        producer,
-                        "Producer Framework Mod final timer"
-                    );
+                    // PFM's SubtractTimeOfDay is useful for aligning long vanilla-style cycles to the
+                    // clock, but after a 20x/80x speed-up it makes each repeated cycle shorter than the
+                    // previous one. In that case use the rule's declared duration as the stable source.
+                    if (TryGetStableBaseDuration(producerRule, __result, out int baseDurationMinutes))
+                    {
+                        ExternalTimerFallbackPatch.TryApplySpeedToBaseDuration(
+                            producer,
+                            baseDurationMinutes,
+                            "Producer Framework Mod base timer"
+                        );
+                    }
+                    else
+                    {
+                        // Rules without SubtractTimeOfDay can safely use PFM's completed final timer.
+                        ExternalTimerFallbackPatch.TryApplySpeedToCurrentTimer(
+                            producer,
+                            "Producer Framework Mod final timer"
+                        );
+                    }
                 }
             }
             catch (Exception ex)
@@ -116,6 +135,71 @@ namespace CombineMachines.Patches
             }
 
             return __exception;
+        }
+
+        /// <summary>
+        /// Get the duration PFM declared for the selected output before SubtractTimeOfDay modifies it.
+        /// Reflection keeps this integration optional, so Combine Machines doesn't need a compile-time
+        /// dependency on Producer Framework Mod.
+        /// </summary>
+        private static bool TryGetStableBaseDuration(object producerRule, object outputConfig, out int baseDurationMinutes)
+        {
+            baseDurationMinutes = 0;
+
+            if (!TryGetBoolMember(producerRule, "SubtractTimeOfDay", out bool subtractTimeOfDay) || !subtractTimeOfDay)
+                return false;
+
+            // OutputConfig.MinutesUntilReady overrides ProducerRule.MinutesUntilReady when present.
+            if (TryGetPositiveIntMember(outputConfig, "MinutesUntilReady", out baseDurationMinutes))
+                return true;
+
+            return TryGetPositiveIntMember(producerRule, "MinutesUntilReady", out baseDurationMinutes);
+        }
+
+        private static bool TryGetBoolMember(object instance, string memberName, out bool value)
+        {
+            value = false;
+            object rawValue = GetMemberValue(instance, memberName);
+            if (rawValue == null)
+                return false;
+
+            if (rawValue is bool boolValue)
+            {
+                value = boolValue;
+                return true;
+            }
+
+            return bool.TryParse(rawValue.ToString(), out value);
+        }
+
+        private static bool TryGetPositiveIntMember(object instance, string memberName, out int value)
+        {
+            value = 0;
+            object rawValue = GetMemberValue(instance, memberName);
+            if (rawValue == null)
+                return false;
+
+            if (rawValue is int intValue)
+            {
+                value = intValue;
+                return value > 0;
+            }
+
+            return int.TryParse(rawValue.ToString(), out value) && value > 0;
+        }
+
+        private static object GetMemberValue(object instance, string memberName)
+        {
+            if (instance == null)
+                return null;
+
+            Type type = instance.GetType();
+            PropertyInfo property = type.GetProperty(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (property != null)
+                return property.GetValue(instance);
+
+            FieldInfo field = type.GetField(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            return field?.GetValue(instance);
         }
     }
 }
