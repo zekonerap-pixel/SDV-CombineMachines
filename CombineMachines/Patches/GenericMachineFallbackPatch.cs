@@ -53,8 +53,21 @@ namespace CombineMachines.Patches
                 if (!__instance.TryGetCombinedQuantity(out int combinedQuantity) || combinedQuantity <= 1)
                     return;
 
-                // A tracked caller means ProcessingPatches.OutputMachinePatch already handled this call.
-                if (__instance.modData.ContainsKey(ModDataExecutingFunctionKey))
+                bool hasTrackedCaller = __instance.modData.ContainsKey(ModDataExecutingFunctionKey);
+                bool isRecalculatedOutput = outputRule?.RecalculateOnCollect == true;
+
+                // Normally a tracked caller means ProcessingPatches.OutputMachinePatch already handled
+                // this call. There is one important exception: its legacy validation rejects a non-null
+                // inputItem for DayUpdate/collection paths (except Crystalariums). RecalculateOnCollect
+                // rules can legitimately have collection context in inputItem, so handle only that exact
+                // rejected path here. This avoids double-multiplying calls the main patch handled normally.
+                bool mainPatchRejectsRecalculatedOutput =
+                    hasTrackedCaller &&
+                    isRecalculatedOutput &&
+                    inputItem != null &&
+                    !string.Equals(__instance.QualifiedItemId, CrystalariumQualifiedItemId, StringComparison.Ordinal);
+
+                if (hasTrackedCaller && !mainPatchRejectsRecalculatedOutput)
                     return;
 
                 // Only use this fallback for actual Stardew 1.6 data-driven machines.
@@ -76,9 +89,22 @@ namespace CombineMachines.Patches
 
                 // Some machines (notably Bee Houses) regenerate their output immediately before the
                 // player collects it. That replacement can discard a multiplier previously applied
-                // when the output first became ready, so reapply it to the freshly recalculated item.
-                if (outputRule?.RecalculateOnCollect == true)
+                // when the output first became ready, so apply it to the freshly recalculated item.
+                //
+                // If this has a tracked caller, we only reach this point when the main patch rejected
+                // the call because inputItem was non-null, so there is no double multiplication.
+                if (isRecalculatedOutput)
                 {
+                    if (mainPatchRejectsRecalculatedOutput)
+                    {
+                        ModEntry.Logger.Log(
+                            $"{nameof(GenericMachineFallbackPatch)}: Handling RecalculateOnCollect output for " +
+                            $"{__instance.DisplayName} ({__instance.QualifiedItemId}) with collection input context " +
+                            $"{inputItem?.QualifiedItemId ?? "<null>"}.",
+                            LogLevel.Trace
+                        );
+                    }
+
                     TryApplyRecalculatedOutputMultiplier(__instance, combinedQuantity);
                     return;
                 }
