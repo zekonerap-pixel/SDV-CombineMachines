@@ -18,6 +18,7 @@ namespace CombineMachines.Patches
     {
         private static readonly HashSet<SObject> CurrentlyAdjusting = new HashSet<SObject>();
         private static readonly HashSet<SObject> OutputMachineInProgress = new HashSet<SObject>();
+        private static readonly HashSet<SObject> ExternalFrameworkTimerCalculationInProgress = new HashSet<SObject>();
 
         internal static void Entry(Harmony harmony)
         {
@@ -57,6 +58,23 @@ namespace CombineMachines.Patches
             }
         }
 
+        /// <summary>
+        /// Temporarily suppress the generic setter watcher while an external framework is calculating
+        /// a machine timer in multiple steps. The framework compatibility patch should call
+        /// <see cref="TryApplySpeedToCurrentTimer"/> once after its calculation is complete.
+        /// </summary>
+        internal static void BeginExternalFrameworkTimerCalculation(SObject machine)
+        {
+            if (machine != null)
+                ExternalFrameworkTimerCalculationInProgress.Add(machine);
+        }
+
+        internal static void EndExternalFrameworkTimerCalculation(SObject machine)
+        {
+            if (machine != null)
+                ExternalFrameworkTimerCalculationInProgress.Remove(machine);
+        }
+
         private static void OutputMachinePrefix(SObject __instance)
         {
             if (__instance != null)
@@ -85,7 +103,8 @@ namespace CombineMachines.Patches
                     !Game1.IsMasterGame ||
                     ModEntry.UserConfig == null ||
                     CurrentlyAdjusting.Contains(__instance) ||
-                    OutputMachineInProgress.Contains(__instance))
+                    OutputMachineInProgress.Contains(__instance) ||
+                    ExternalFrameworkTimerCalculationInProgress.Contains(__instance))
                 {
                     return;
                 }
@@ -97,49 +116,7 @@ namespace CombineMachines.Patches
                 if (assignedMinutes <= 0 || assignedMinutes <= __state)
                     return;
 
-                if (!__instance.TryGetCombinedQuantity(out int combinedQuantity) || combinedQuantity <= 1)
-                    return;
-
-                if (__instance is Cask || __instance is CrabPot || __instance.IsScarecrow() || __instance.IsTapper())
-                    return;
-
-                if (!ModEntry.UserConfig.ShouldModifyProcessingSpeed(__instance))
-                    return;
-
-                double processingPower = ModEntry.UserConfig.ComputeProcessingPower(combinedQuantity);
-                if (processingPower <= 1.0)
-                    return;
-
-                double durationMultiplier = 1.0 / processingPower;
-                double desiredMinutes = assignedMinutes * durationMultiplier;
-                int newMinutes = RNGHelpers.WeightedRound(desiredMinutes);
-
-                // Match the normal Combine Machines timing behavior and Stardew's 10-minute machine ticks.
-                int smallestDigit = newMinutes % 10;
-                newMinutes -= smallestDigit;
-                if (RNGHelpers.RollDice(smallestDigit / 10.0))
-                    newMinutes += 10;
-
-                newMinutes = Math.Max(10, newMinutes);
-                if (newMinutes >= assignedMinutes)
-                    return;
-
-                try
-                {
-                    CurrentlyAdjusting.Add(__instance);
-                    __instance.MinutesUntilReady = newMinutes;
-                }
-                finally
-                {
-                    CurrentlyAdjusting.Remove(__instance);
-                }
-
-                ModEntry.Logger.Log(
-                    $"{nameof(ExternalTimerFallbackPatch)}: Accelerated externally assigned timer for " +
-                    $"{__instance.DisplayName} ({__instance.QualifiedItemId}) from {assignedMinutes} to {newMinutes} minutes " +
-                    $"using combined quantity {combinedQuantity} ({(processingPower * 100.0).ToString("0.##")}% power).",
-                    ModEntry.InfoLogLevel
-                );
+                TryApplySpeedToCurrentTimer(__instance, "external timer assignment");
             }
             catch (Exception ex)
             {
@@ -148,6 +125,72 @@ namespace CombineMachines.Patches
                     LogLevel.Error
                 );
             }
+        }
+
+        /// <summary>
+        /// Apply the configured IncreaseSpeed processing power to the machine's current timer exactly once.
+        /// This is also used by compatibility patches which need to wait until another framework has finished
+        /// a multi-step timer calculation before Combine Machines modifies the final value.
+        /// </summary>
+        internal static bool TryApplySpeedToCurrentTimer(SObject machine, string source)
+        {
+            if (machine == null ||
+                !Context.IsWorldReady ||
+                !Game1.IsMasterGame ||
+                ModEntry.UserConfig == null ||
+                CurrentlyAdjusting.Contains(machine))
+            {
+                return false;
+            }
+
+            int assignedMinutes = machine.MinutesUntilReady;
+            if (assignedMinutes <= 0 || machine.readyForHarvest.Value)
+                return false;
+
+            if (!machine.TryGetCombinedQuantity(out int combinedQuantity) || combinedQuantity <= 1)
+                return false;
+
+            if (machine is Cask || machine is CrabPot || machine.IsScarecrow() || machine.IsTapper())
+                return false;
+
+            if (!ModEntry.UserConfig.ShouldModifyProcessingSpeed(machine))
+                return false;
+
+            double processingPower = ModEntry.UserConfig.ComputeProcessingPower(combinedQuantity);
+            if (processingPower <= 1.0)
+                return false;
+
+            double desiredMinutes = assignedMinutes / processingPower;
+            int newMinutes = RNGHelpers.WeightedRound(desiredMinutes);
+
+            // Match the normal Combine Machines timing behavior and Stardew's 10-minute machine ticks.
+            int smallestDigit = newMinutes % 10;
+            newMinutes -= smallestDigit;
+            if (RNGHelpers.RollDice(smallestDigit / 10.0))
+                newMinutes += 10;
+
+            newMinutes = Math.Max(10, newMinutes);
+            if (newMinutes >= assignedMinutes)
+                return false;
+
+            try
+            {
+                CurrentlyAdjusting.Add(machine);
+                machine.MinutesUntilReady = newMinutes;
+            }
+            finally
+            {
+                CurrentlyAdjusting.Remove(machine);
+            }
+
+            ModEntry.Logger.Log(
+                $"{nameof(ExternalTimerFallbackPatch)}: Accelerated {source} for " +
+                $"{machine.DisplayName} ({machine.QualifiedItemId}) from {assignedMinutes} to {newMinutes} minutes " +
+                $"using combined quantity {combinedQuantity} ({(processingPower * 100.0).ToString("0.##")}% power).",
+                ModEntry.InfoLogLevel
+            );
+
+            return true;
         }
     }
 }
