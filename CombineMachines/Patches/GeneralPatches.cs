@@ -44,8 +44,12 @@ namespace CombineMachines.Patches
         {
             try
             {
-                //  Always return false if the machine has been merged with another machine
-                if (__instance is SObject sObj && sObj.IsCombinedMachine())
+                // Always return false if either side of the stack comparison is a combined machine.
+                // Item.canStackWith can be invoked in either direction, so checking only __instance
+                // could allow a normal machine to stack into a combined one and lose its modData.
+                bool InstanceIsCombined = __instance is SObject sObj && sObj.IsCombinedMachine();
+                bool OtherIsCombined = other is SObject otherObj && otherObj.IsCombinedMachine();
+                if (InstanceIsCombined || OtherIsCombined)
                 {
                     __result = false;
                     return false;
