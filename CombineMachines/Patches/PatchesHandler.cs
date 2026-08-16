@@ -1,4 +1,4 @@
-﻿using CombineMachines.Helpers;
+using CombineMachines.Helpers;
 using HarmonyLib;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -71,6 +71,7 @@ namespace CombineMachines.Patches
             CrystalariumRepeatCyclePatch.Entry(Harmony);
             GenericMachineFallbackPatch.Entry(Harmony);
             ExternalTimerFallbackPatch.Entry(Harmony);
+            ProducerFrameworkCompatibilityPatch.Entry(helper, Harmony);
 
             //  Patch StardewValley.Object.minutesElapsed to detect when a machines output is ready for collecting, and when that happens, increase the output quantity
             //  to account for how many machines were combined
