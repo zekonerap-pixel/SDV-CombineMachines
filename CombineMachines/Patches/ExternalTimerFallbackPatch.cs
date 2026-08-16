@@ -60,8 +60,8 @@ namespace CombineMachines.Patches
 
         /// <summary>
         /// Temporarily suppress the generic setter watcher while an external framework is calculating
-        /// a machine timer in multiple steps. The framework compatibility patch should call
-        /// <see cref="TryApplySpeedToCurrentTimer"/> once after its calculation is complete.
+        /// a machine timer in multiple steps. The framework compatibility patch should apply one final
+        /// speed adjustment after its calculation is complete.
         /// </summary>
         internal static void BeginExternalFrameworkTimerCalculation(SObject machine)
         {
@@ -134,6 +134,27 @@ namespace CombineMachines.Patches
         /// </summary>
         internal static bool TryApplySpeedToCurrentTimer(SObject machine, string source)
         {
+            int durationMinutes = machine?.MinutesUntilReady ?? 0;
+            return TryApplySpeedToDuration(machine, durationMinutes, source, allowLongerThanCurrentTimer: false);
+        }
+
+        /// <summary>
+        /// Apply IncreaseSpeed to a stable base duration supplied by an external framework.
+        /// This is useful when that framework derives its final timer from the time of day: the combined
+        /// machine should get the same accelerated cycle length every time instead of progressively shorter
+        /// cycles as the in-game clock advances.
+        /// </summary>
+        internal static bool TryApplySpeedToBaseDuration(SObject machine, int baseDurationMinutes, string source)
+        {
+            return TryApplySpeedToDuration(machine, baseDurationMinutes, source, allowLongerThanCurrentTimer: true);
+        }
+
+        private static bool TryApplySpeedToDuration(
+            SObject machine,
+            int durationMinutes,
+            string source,
+            bool allowLongerThanCurrentTimer)
+        {
             if (machine == null ||
                 !Context.IsWorldReady ||
                 !Game1.IsMasterGame ||
@@ -143,8 +164,8 @@ namespace CombineMachines.Patches
                 return false;
             }
 
-            int assignedMinutes = machine.MinutesUntilReady;
-            if (assignedMinutes <= 0 || machine.readyForHarvest.Value)
+            int previousMinutes = machine.MinutesUntilReady;
+            if (durationMinutes <= 0 || previousMinutes <= 0 || machine.readyForHarvest.Value)
                 return false;
 
             if (!machine.TryGetCombinedQuantity(out int combinedQuantity) || combinedQuantity <= 1)
@@ -160,7 +181,7 @@ namespace CombineMachines.Patches
             if (processingPower <= 1.0)
                 return false;
 
-            double desiredMinutes = assignedMinutes / processingPower;
+            double desiredMinutes = durationMinutes / processingPower;
             int newMinutes = RNGHelpers.WeightedRound(desiredMinutes);
 
             // Match the normal Combine Machines timing behavior and Stardew's 10-minute machine ticks.
@@ -170,8 +191,15 @@ namespace CombineMachines.Patches
                 newMinutes += 10;
 
             newMinutes = Math.Max(10, newMinutes);
-            if (newMinutes >= assignedMinutes)
+
+            // Generic external assignments should only ever be shortened. A framework-specific stable
+            // base duration is allowed to increase the framework's time-of-day-adjusted value back to the
+            // correct fixed accelerated cycle length.
+            if ((!allowLongerThanCurrentTimer && newMinutes >= previousMinutes) ||
+                (allowLongerThanCurrentTimer && newMinutes == previousMinutes))
+            {
                 return false;
+            }
 
             try
             {
@@ -185,8 +213,9 @@ namespace CombineMachines.Patches
 
             ModEntry.Logger.Log(
                 $"{nameof(ExternalTimerFallbackPatch)}: Accelerated {source} for " +
-                $"{machine.DisplayName} ({machine.QualifiedItemId}) from {assignedMinutes} to {newMinutes} minutes " +
-                $"using combined quantity {combinedQuantity} ({(processingPower * 100.0).ToString("0.##")}% power).",
+                $"{machine.DisplayName} ({machine.QualifiedItemId}) from {previousMinutes} to {newMinutes} minutes " +
+                $"using source duration {durationMinutes}, combined quantity {combinedQuantity} " +
+                $"({(processingPower * 100.0).ToString("0.##")}% power).",
                 ModEntry.InfoLogLevel
             );
 
