@@ -1,4 +1,4 @@
-﻿using CombineMachines.Patches;
+using CombineMachines.Patches;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
@@ -38,13 +38,94 @@ namespace CombineMachines.Helpers
             if (!IsCombinableObject(Item))
                 throw new InvalidOperationException("Only machines can be combined in mod: ." + nameof(CombineMachines));
 
-            if (!TryGetCombinedQuantity(Item, out int PreviousValue))
+            bool WasAlreadyCombined = TryGetCombinedQuantity(Item, out int PreviousValue);
+            if (!WasAlreadyCombined)
                 PreviousValue = 0;
+
+            // If the target machine is already processing something, changing the combined quantity
+            // must also change the remaining duration in IncreaseSpeed mode. Stardew 1.6 can preserve
+            // heldObject/MinutesUntilReady while a machine is in the inventory (Bee Houses are a common
+            // example), so waiting for the next OutputMachine call can leave the old single-machine timer
+            // in place indefinitely.
+            double PreviousProcessingPower = WasAlreadyCombined && PreviousValue > 1
+                ? ModEntry.UserConfig.ComputeProcessingPower(PreviousValue)
+                : 1.0;
 
             Item.modData[ModEntry.ModDataQuantityKey] = Quantity.ToString();
             int PreviousStack = Item.Stack;
             Item.Stack = 1;
+
+            if (Item.heldObject?.Value != null &&
+                Item.MinutesUntilReady > 0 &&
+                !Item.readyForHarvest.Value &&
+                Item is not Cask &&
+                Item is not CrabPot &&
+                !Item.IsScarecrow() &&
+                ModEntry.UserConfig.ShouldModifyProcessingSpeed(Item))
+            {
+                double NewProcessingPower = ModEntry.UserConfig.ComputeProcessingPower(Quantity);
+                if (TryRescaleActiveProcessingTimer(
+                    Item,
+                    PreviousProcessingPower,
+                    NewProcessingPower,
+                    out int PreviousMinutes,
+                    out int NewMinutes,
+                    out double DurationMultiplier))
+                {
+                    ModEntry.Logger.Log(
+                        $"Rescaled active processing timer on {Item.DisplayName} ({Item.QualifiedItemId}) " +
+                        $"after combining quantity {Math.Max(1, PreviousValue)} -> {Quantity}: " +
+                        $"{PreviousMinutes} -> {NewMinutes} minutes " +
+                        $"({(DurationMultiplier * 100.0).ToString("0.##")}% remaining duration).",
+                        ModEntry.InfoLogLevel
+                    );
+                }
+            }
+
             ModEntry.Logger.Log(string.Format("Set combined quantity on {0} (Stack={1}) from {2} to {3}", Item.DisplayName, PreviousStack, PreviousValue, Quantity), ModEntry.InfoLogLevel);
+        }
+
+        /// <summary>
+        /// Rescale an in-progress machine timer when its processing power changes. The ratio between
+        /// the old and new power is used so adding more machines to an already-combined active machine
+        /// doesn't apply the full multiplier a second time.
+        /// </summary>
+        private static bool TryRescaleActiveProcessingTimer(
+            SObject Item,
+            double PreviousProcessingPower,
+            double NewProcessingPower,
+            out int PreviousMinutes,
+            out int NewMinutes,
+            out double DurationMultiplier)
+        {
+            PreviousMinutes = Item.MinutesUntilReady;
+            NewMinutes = PreviousMinutes;
+            DurationMultiplier = 1.0;
+
+            if (PreviousMinutes <= 0 ||
+                Item.readyForHarvest.Value ||
+                PreviousProcessingPower <= 0.0 ||
+                NewProcessingPower <= PreviousProcessingPower)
+            {
+                return false;
+            }
+
+            DurationMultiplier = PreviousProcessingPower / NewProcessingPower;
+            double TargetValue = PreviousMinutes * DurationMultiplier;
+            NewMinutes = RNGHelpers.WeightedRound(TargetValue);
+
+            // Keep the same 10-minute weighted rounding used by the normal processing patch.
+            int SmallestDigit = NewMinutes % 10;
+            NewMinutes -= SmallestDigit;
+            if (RNGHelpers.RollDice(SmallestDigit / 10.0))
+                NewMinutes += 10;
+
+            NewMinutes = Math.Max(10, NewMinutes);
+            if (NewMinutes >= PreviousMinutes)
+                return false;
+
+            Item.MinutesUntilReady = NewMinutes;
+            return true;
         }
 
         public static bool TryGetProcessingInterval(this CrabPot Item, out double Power, out double IntervalDecimalHours, out int IntervalMinutes)
