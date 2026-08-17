@@ -72,6 +72,7 @@ namespace CombineMachines.Patches
             GenericMachineFallbackPatch.Entry(Harmony);
             ExternalTimerFallbackPatch.Entry(Harmony);
             ProducerFrameworkCompatibilityPatch.Entry(helper, Harmony);
+            LightningRodPatch.Entry(Harmony);
 
             //  Patch StardewValley.Object.minutesElapsed to detect when a machines output is ready for collecting, and when that happens, increase the output quantity
             //  to account for how many machines were combined
